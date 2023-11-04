@@ -6,5 +6,12 @@ edition = "2021"
 publish = false
 
 [dependencies]
-iced = { version = "0.10", features = ["tokio", "debug", "image", "advanced", "svg"] }
-
+ffmpeg-next = "6.0.0"
+iced = { version = "0.10", features = [
+	"tokio",
+	"debug",
+	"image",
+	"advanced",
+	"svg",
+] }
+tokio = { version = "1.28", features = ["full"] }
