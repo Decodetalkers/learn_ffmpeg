@@ -25,6 +25,7 @@ fn main() -> iced::Result {
     })
 }
 
+#[derive(Debug)]
 struct Tiger {
     player: player::Player,
 }
@@ -33,6 +34,11 @@ struct Tiger {
 enum Message {
     RequestStart,
     FFMpeg(FFMpegEvent),
+}
+
+#[derive(Debug, Clone)]
+enum FFMpegMessages {
+    Data(Vec<u8>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,9 +52,9 @@ impl Application for Tiger {
     type Executor = executor::Default;
     type Theme = Theme;
     fn new(flags: Self::Flags) -> (Self, Command<Message>) {
-        let (listener, sender) = mpsc::channel::<FFMpegEvent>();
+        let (listener, sender) = mpsc::channel::<FFMpegMessages>();
         let url = flags.url;
-        let mut player = player::Player::start(
+        let player = player::Player::start(
             url.into(),
             move |newframe| {
                 println!("eee");
@@ -73,7 +79,6 @@ impl Application for Tiger {
     }
 
     fn view(&self) -> Element<Self::Message> {
-        //let handle = svg::Handle::from_memory(IMAGE);
         container(button("|>").on_press(Message::RequestStart))
             .width(Length::Fill)
             .center_x()

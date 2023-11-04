@@ -1,7 +1,7 @@
 // Copyright © SixtyFPS GmbH <info@slint.dev>
 // SPDX-License-Identifier: MIT
 
-use std::path::PathBuf;
+use std::{fmt::Debug, path::PathBuf};
 
 use futures::{future::OptionFuture, FutureExt};
 
@@ -19,6 +19,14 @@ pub struct Player {
     demuxer_thread: Option<std::thread::JoinHandle<()>>,
     playing: bool,
     playing_changed_callback: Box<dyn Fn(bool)>,
+}
+
+impl Debug for Player {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Player")
+            .field("playing", &self.playing)
+            .finish()
+    }
 }
 
 impl Player {
