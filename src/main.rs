@@ -1,9 +1,10 @@
+use ffmpeg_next::format::Pixel;
 use iced::futures::SinkExt;
-use iced::widget::{button, container};
+use iced::widget::image::Handle;
+use iced::widget::{button, column, container, Image};
 use iced::{
     executor, subscription, Application, Command, Element, Length, Settings, Subscription, Theme,
 };
-
 use std::sync::Arc;
 
 use tokio::sync::{mpsc::Receiver, Mutex};
@@ -30,12 +31,32 @@ struct FFmpegSimple {
     player: player::Player,
     rv: Arc<Mutex<Receiver<FFMpegMessages>>>,
     play_status: bool,
+    data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     RequestStart,
     FFMpeg(FFMpegMessages),
+}
+
+#[derive(derive_more::Deref, derive_more::DerefMut)]
+struct Rescaler(ffmpeg_next::software::scaling::Context);
+unsafe impl std::marker::Send for Rescaler {}
+
+fn rgba_rescaler_for_frame(frame: &ffmpeg_next::util::frame::Video) -> Rescaler {
+    Rescaler(
+        ffmpeg_next::software::scaling::Context::get(
+            frame.format(),
+            frame.width(),
+            frame.height(),
+            Pixel::RGB24,
+            frame.width(),
+            frame.height(),
+            ffmpeg_next::software::scaling::Flags::BILINEAR,
+        )
+        .unwrap(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -53,9 +74,25 @@ impl Application for FFmpegSimple {
         let (sd, rv) = tokio::sync::mpsc::channel::<FFMpegMessages>(100);
         let sd2 = sd.clone();
         let url = flags.url;
+        let mut to_rgba_rescaler: Option<Rescaler> = None;
         let player = player::Player::start(
             url.into(),
-            move |newframe| {},
+            move |new_frame| {
+                let rebuild_rescaler =
+                    to_rgba_rescaler.as_ref().map_or(true, |existing_rescaler| {
+                        existing_rescaler.input().format != new_frame.format()
+                    });
+
+                if rebuild_rescaler {
+                    to_rgba_rescaler = Some(rgba_rescaler_for_frame(new_frame));
+                }
+                let rescaler = to_rgba_rescaler.as_mut().unwrap();
+
+                let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
+                rescaler.run(&new_frame, &mut rgb_frame).unwrap();
+                sd.try_send(FFMpegMessages::Data(rgb_frame.data(0).to_vec()))
+                    .ok();
+            },
             move |playing| {
                 sd2.try_send(FFMpegMessages::StatusChanged(playing)).ok();
             },
@@ -66,6 +103,7 @@ impl Application for FFmpegSimple {
                 player,
                 rv: Arc::new(Mutex::new(rv)),
                 play_status: false,
+                data: Vec::new(),
             },
             Command::none(),
         )
@@ -83,17 +121,28 @@ impl Application for FFmpegSimple {
             Message::FFMpeg(FFMpegMessages::StatusChanged(status)) => {
                 self.play_status = status;
             }
-            _ => {}
+            Message::FFMpeg(FFMpegMessages::Data(data)) => {
+                self.data = data;
+            }
         }
         Command::none()
     }
 
     fn view(&self) -> Element<Self::Message> {
         let icon = if self.play_status { "o" } else { "|>" };
-        container(button(icon).on_press(Message::RequestStart))
-            .width(Length::Fill)
-            .center_x()
-            .into()
+        let imagehd = Handle::from_memory(self.data.clone());
+        let image: Element<Message> = Image::new(imagehd).width(Length::Fill).into();
+        container(column![
+            image,
+            container(button(icon).on_press(Message::RequestStart))
+                .width(Length::Fill)
+                .center_x()
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x()
+        .center_y()
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
