@@ -107,12 +107,17 @@ impl Application for FFmpegSimple {
 
                 let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
                 rescaler.run(new_frame, &mut rgb_frame).unwrap();
+                rgb_frame.converter(Pixel::RGB32).unwrap();
                 let video_data = rgb_frame.data(0);
-
+                let mut realdata = Vec::new();
+                for signaldata in video_data.chunks_exact(3) {
+                    realdata.append(&mut signaldata.to_vec());
+                    realdata.push(255);
+                }
                 sd.try_send(FFMpegMessages::Data((
                     rgb_frame.width(),
                     rgb_frame.height(),
-                    video_data.to_vec(),
+                    realdata,
                 )))
                 .ok();
             },
