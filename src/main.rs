@@ -4,18 +4,18 @@ use iced::{
     executor, subscription, Application, Command, Element, Length, Settings, Subscription, Theme,
 };
 
-use std::sync::mpsc;
+use std::sync::Arc;
 
+use tokio::sync::{mpsc::Receiver, Mutex};
 mod player;
 
-#[allow(unused)]
 #[derive(Debug, Default)]
 struct InitFlag {
     url: String,
 }
 
 fn main() -> iced::Result {
-    Tiger::run(Settings {
+    FFmpegSimple::run(Settings {
         flags: InitFlag {
             url:
                 "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"
@@ -26,74 +26,89 @@ fn main() -> iced::Result {
 }
 
 #[derive(Debug)]
-struct Tiger {
+struct FFmpegSimple {
     player: player::Player,
+    rv: Arc<Mutex<Receiver<FFMpegMessages>>>,
+    play_status: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Message {
     RequestStart,
-    FFMpeg(FFMpegEvent),
+    FFMpeg(FFMpegMessages),
 }
 
 #[derive(Debug, Clone)]
 enum FFMpegMessages {
     Data(Vec<u8>),
+    StatusChanged(bool),
 }
 
-#[derive(Debug, Clone, Copy)]
-enum FFMpegEvent {
-    Frame,
-}
-
-impl Application for Tiger {
+impl Application for FFmpegSimple {
     type Message = Message;
     type Flags = InitFlag;
     type Executor = executor::Default;
     type Theme = Theme;
     fn new(flags: Self::Flags) -> (Self, Command<Message>) {
-        let (listener, sender) = mpsc::channel::<FFMpegMessages>();
+        let (sd, rv) = tokio::sync::mpsc::channel::<FFMpegMessages>(100);
+        let sd2 = sd.clone();
         let url = flags.url;
         let player = player::Player::start(
             url.into(),
-            move |newframe| {
-                println!("eee");
-            },
+            move |newframe| {},
             move |playing| {
-                println!("is Playing: {playing}");
+                sd2.try_send(FFMpegMessages::StatusChanged(playing)).ok();
             },
         )
         .unwrap();
-        (Tiger { player }, Command::none())
+        (
+            FFmpegSimple {
+                player,
+                rv: Arc::new(Mutex::new(rv)),
+                play_status: false,
+            },
+            Command::none(),
+        )
     }
 
     fn title(&self) -> String {
-        String::from("SVG - Iced")
+        String::from("FFMpeg - Iced")
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Message> {
-        if let Message::RequestStart = message {
-            self.player.toggle_pause_playing();
+        match message {
+            Message::RequestStart => {
+                self.player.toggle_pause_playing();
+            }
+            Message::FFMpeg(FFMpegMessages::StatusChanged(status)) => {
+                self.play_status = status;
+            }
+            _ => {}
         }
         Command::none()
     }
 
     fn view(&self) -> Element<Self::Message> {
-        container(button("|>").on_press(Message::RequestStart))
+        let icon = if self.play_status { "o" } else { "|>" };
+        container(button(icon).on_press(Message::RequestStart))
             .width(Length::Fill)
             .center_x()
             .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
+        let rv = self.rv.clone();
         struct FFMpeg;
         subscription::channel(
             std::any::TypeId::of::<FFMpeg>(),
             100,
             |mut output| async move {
+                let mut rv = rv.lock().await;
                 loop {
-                    let _ = output.send(FFMpegEvent::Frame).await;
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let Some(message) = rv.recv().await else {
+                        continue;
+                    };
+                    let _ = output.send(message).await;
                 }
             },
         )
