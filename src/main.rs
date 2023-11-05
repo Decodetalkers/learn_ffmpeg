@@ -89,7 +89,7 @@ impl Application for FFmpegSimple {
                 let rescaler = to_rgba_rescaler.as_mut().unwrap();
 
                 let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
-                rescaler.run(&new_frame, &mut rgb_frame).unwrap();
+                rescaler.run(new_frame, &mut rgb_frame).unwrap();
                 sd.try_send(FFMpegMessages::Data(rgb_frame.data(0).to_vec()))
                     .ok();
             },
