@@ -26,12 +26,29 @@ fn main() -> iced::Result {
     })
 }
 
+#[derive(Debug, Default, Clone)]
+struct DataInfo {
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+impl From<(u32, u32, Vec<u8>)> for DataInfo {
+    fn from((width, height, data): (u32, u32, Vec<u8>)) -> Self {
+        DataInfo {
+            data,
+            width,
+            height,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct FFmpegSimple {
     player: player::Player,
     rv: Arc<Mutex<Receiver<FFMpegMessages>>>,
     play_status: bool,
-    data: Vec<u8>,
+    data: DataInfo,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +78,7 @@ fn rgba_rescaler_for_frame(frame: &ffmpeg_next::util::frame::Video) -> Rescaler 
 
 #[derive(Debug, Clone)]
 enum FFMpegMessages {
-    Data(Vec<u8>),
+    Data((u32, u32, Vec<u8>)),
     StatusChanged(bool),
 }
 
@@ -90,8 +107,14 @@ impl Application for FFmpegSimple {
 
                 let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
                 rescaler.run(new_frame, &mut rgb_frame).unwrap();
-                sd.try_send(FFMpegMessages::Data(rgb_frame.data(0).to_vec()))
-                    .ok();
+                let video_data = rgb_frame.data(0);
+
+                sd.try_send(FFMpegMessages::Data((
+                    rgb_frame.width(),
+                    rgb_frame.height(),
+                    video_data.to_vec(),
+                )))
+                .ok();
             },
             move |playing| {
                 sd2.try_send(FFMpegMessages::StatusChanged(playing)).ok();
@@ -103,7 +126,7 @@ impl Application for FFmpegSimple {
                 player,
                 rv: Arc::new(Mutex::new(rv)),
                 play_status: false,
-                data: Vec::new(),
+                data: DataInfo::default(),
             },
             Command::none(),
         )
@@ -122,7 +145,7 @@ impl Application for FFmpegSimple {
                 self.play_status = status;
             }
             Message::FFMpeg(FFMpegMessages::Data(data)) => {
-                self.data = data;
+                self.data = data.into();
             }
         }
         Command::none()
@@ -130,7 +153,12 @@ impl Application for FFmpegSimple {
 
     fn view(&self) -> Element<Self::Message> {
         let icon = if self.play_status { "o" } else { "|>" };
-        let imagehd = Handle::from_memory(self.data.clone());
+        let DataInfo {
+            data: pixels,
+            width,
+            height,
+        } = self.data.clone();
+        let imagehd = Handle::from_pixels(width, height, pixels.as_slice().to_owned());
         let image: Element<Message> = Image::new(imagehd).width(Length::Fill).into();
         container(column![
             image,
